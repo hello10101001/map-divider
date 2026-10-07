@@ -1,0 +1,9 @@
+{
+  "appId": "com.mapdivider.app",
+  "appName": "지도 분할 계산기",
+  "webDir": "www",
+  "backgroundColor": "#f6f5f1",
+  "server": {
+    "androidScheme": "https"
+  }
+}

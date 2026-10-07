@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<!-- OpenStreetMap 타일 서버는 요청에 Referer 헤더가 없으면 403으로 차단합니다.
+     이 페이지를 실제 웹서버(http/https)에서 열면 브라우저가 Referer를 자동으로 보내므로
+     문제가 없지만, 혹시라도 Referrer-Policy가 no-referrer로 설정된 환경(사내망 프록시 등)을
+     대비해 명시적으로 지정해둡니다. -->
+<meta name="referrer" content="strict-origin-when-cross-origin" />
+
+<!-- 모바일 홈 화면에 "앱처럼" 추가할 수 있게 해주는 PWA 설정 -->
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#2f6f4e" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="지도 분할계산기" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<link rel="icon" href="icon-192.png" />
+
+<title>지도 영역 분할 계산기</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root{
+    --ink:#1c2321;
+    --ink-soft:#5b6560;
+    --paper:#f6f5f1;
+    --line:#d8d5cb;
+    --accent:#2f6f4e;
+    --accent-soft:#e6efe8;
+    --warn:#a4462b;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; height:100%;
+    font-family:-apple-system,"Pretendard","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+    color:var(--ink);
+    background:var(--paper);
+  }
+  #app{
+    display:grid;
+    grid-template-columns: 360px 1fr;
+    height:100vh;
+    min-height:520px;
+  }
+  #panel{
+    border-right:1px solid var(--line);
+    background:#fff;
+    overflow-y:auto;
+    padding:22px 20px 40px;
+  }
+  #map{
+    width:100%; height:100%;
+  }
+  h1{
+    font-size:19px;
+    margin:0 0 4px;
+    letter-spacing:-0.01em;
+  }
+  .lead{
+    font-size:13px;
+    color:var(--ink-soft);
+    margin:0 0 20px;
+    line-height:1.5;
+  }
+  .section{
+    padding:16px 0;
+    border-top:1px solid var(--line);
+  }
+  .section:first-of-type{ border-top:none; padding-top:0; }
+  .section h2{
+    font-size:12px;
+    font-weight:600;
+    color:var(--ink-soft);
+    margin:0 0 10px;
+  }
+  button{
+    font-family:inherit;
+    cursor:pointer;
+    border-radius:6px;
+    border:1px solid var(--line);
+    background:#fff;
+    padding:9px 12px;
+    font-size:13.5px;
+    color:var(--ink);
+    transition:background .12s, border-color .12s;
+  }
+  button:hover{ border-color:#b9b4a4; }
+  #drawBtn{
+    width:100%;
+    background:var(--accent);
+    color:#fff;
+    border-color:var(--accent);
+    font-weight:600;
+    padding:11px 12px;
+  }
+  #drawBtn:hover{ background:#265d41; }
+  #drawBtn.active{
+    background:var(--warn);
+    border-color:var(--warn);
+  }
+  #resetBtn{
+    width:100%;
+    margin-top:8px;
+    color:var(--ink-soft);
+  }
+  .stat-row{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    padding:6px 0;
+    font-size:13.5px;
+  }
+  .stat-row .label{ color:var(--ink-soft); }
+  .stat-row .value{ font-weight:600; font-variant-numeric:tabular-nums; }
+  .stat-row .value.big{ font-size:17px; color:var(--accent); }
+  .empty-hint{
+    font-size:13px;
+    color:var(--ink-soft);
+    background:var(--accent-soft);
+    border-radius:8px;
+    padding:12px 13px;
+    line-height:1.5;
+  }
+  .field{
+    margin-bottom:12px;
+  }
+  .field label{
+    display:block;
+    font-size:12.5px;
+    color:var(--ink-soft);
+    margin-bottom:5px;
+  }
+  .field input, .field select{
+    width:100%;
+    font-family:inherit;
+    font-size:14px;
+    padding:8px 10px;
+    border:1px solid var(--line);
+    border-radius:6px;
+    background:#fdfdfc;
+  }
+  .field input:focus, .field select:focus{
+    outline:none;
+    border-color:var(--accent);
+  }
+  .mode-toggle{
+    display:flex;
+    gap:6px;
+    margin-bottom:14px;
+  }
+  .mode-toggle button{
+    flex:1;
+    font-size:12.5px;
+    padding:8px 6px;
+  }
+  .mode-toggle button.active{
+    background:var(--ink);
+    color:#fff;
+    border-color:var(--ink);
+  }
+  .dims{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap:10px;
+  }
+  #divideBtn{
+    width:100%;
+    background:var(--ink);
+    color:#fff;
+    border-color:var(--ink);
+    font-weight:600;
+    margin-top:4px;
+  }
+  #divideBtn:disabled{
+    background:#cfcac0;
+    border-color:#cfcac0;
+    cursor:not-allowed;
+  }
+  #result{
+    font-size:13.5px;
+  }
+  #gpsSection{ display:none; }
+  #gpsBtn{
+    width:100%;
+    background:#fff;
+    border-color:var(--warn);
+    color:var(--warn);
+    font-weight:600;
+  }
+  #gpsBtn:hover{ background:#fdf1ee; }
+  #gpsBtn:disabled{
+    background:#f2f1ec;
+    border-color:var(--line);
+    color:var(--ink-soft);
+    cursor:not-allowed;
+  }
+  .value.warn{ color:var(--warn); }
+  .leaflet-container{ cursor: default; }
+  .leaflet-container.drawing-mode{ cursor: crosshair; touch-action: none; }
+
+  /* ---- 폰 전용 레이아웃: 지도 풀스크린 + 하단 시트 패널 + 플로팅 버튼 ----
+     600px 미만(좁은 폰)에서만 적용. 태블릿(보통 세로 700px 이상)은 아래
+     데스크톱과 같은 사이드 패널 레이아웃을 그대로 사용해 화면을 넓게 쓴다. */
+  #mobileFab{ display:none; }
+  @media (max-width: 600px){
+    #app{
+      display:block;
+      position:relative;
+      height:100vh;
+      height:100dvh;
+    }
+    #map{
+      position:absolute; inset:0;
+      height:100%;
+      padding-top:env(safe-area-inset-top, 0px);
+    }
+    #panel{
+      position:fixed; left:0; right:0; bottom:0;
+      max-height:75vh;
+      border-top:none;
+      border-radius:18px 18px 0 0;
+      box-shadow:0 -6px 24px rgba(0,0,0,.18);
+      padding:10px 20px calc(20px + env(safe-area-inset-bottom, 0px));
+      transform:translateY(calc(100% - 6px));
+      transition:transform .25s ease;
+      z-index:1000;
+    }
+    #panel.open{ transform:translateY(0); }
+    #panelHandle{
+      width:40px; height:5px; border-radius:3px;
+      background:var(--line);
+      margin:0 auto 12px;
+    }
+    #mobileFab{
+      display:flex; align-items:center; justify-content:center;
+      position:fixed;
+      right:18px; bottom:calc(18px + env(safe-area-inset-bottom, 0px));
+      width:56px; height:56px; border-radius:50%;
+      background:var(--accent); color:#fff; font-size:22px;
+      box-shadow:0 4px 14px rgba(0,0,0,.28);
+      z-index:1001; border:none;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="panel">
+    <div id="panelHandle"></div>
+    <h1>지도 영역 분할 계산기</h1>
+    <p class="lead">지도를 드래그해 영역을 지정하면 면적을 계산하고, 원하는 크기로 구획을 나눠 표시합니다.</p>
+
+    <div class="section">
+      <h2>1. 영역 그리기</h2>
+      <button id="drawBtn">영역 그리기 시작</button>
+      <button id="resetBtn">전체 초기화</button>
+    </div>
+
+    <div class="section">
+      <h2>2. 선택 영역 정보</h2>
+      <div id="areaStats">
+        <div class="empty-hint">지도 위를 드래그해서 사각형 영역을 그려주세요.</div>
+      </div>
+    </div>
+
+    <div class="section" id="divideSection" style="display:none;">
+      <h2>3. 구획 분할</h2>
+
+      <div class="mode-toggle">
+        <button id="modeArea" class="active">면적 기준(정사각형)</button>
+        <button id="modeDims">가로 × 세로</button>
+      </div>
+
+      <div id="modeAreaFields">
+        <div class="field">
+          <label for="targetArea">목표 필지 면적</label>
+          <input type="number" id="targetArea" min="1" value="100" step="1" />
+        </div>
+        <div class="field">
+          <label for="areaUnit">단위</label>
+          <select id="areaUnit">
+            <option value="m2">m² (제곱미터)</option>
+            <option value="pyeong">평 (1평 = 3.3058 m²)</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="modeDimsFields" style="display:none;">
+        <div class="dims">
+          <div class="field">
+            <label for="cellWidth">가로 (m)</label>
+            <input type="number" id="cellWidth" min="1" value="10" step="0.5" />
+          </div>
+          <div class="field">
+            <label for="cellHeight">세로 (m)</label>
+            <input type="number" id="cellHeight" min="1" value="10" step="0.5" />
+          </div>
+        </div>
+      </div>
+
+      <button id="divideBtn">분할 실행</button>
+
+      <div id="result" style="margin-top:14px;"></div>
+    </div>
+
+    <div class="section" id="gpsSection">
+      <h2>4. 내 위치에서 가장 먼 구획</h2>
+      <button id="gpsBtn">내 위치 확인하고 찾기</button>
+      <div id="gpsResult" style="margin-top:12px;"></div>
+    </div>
+  </div>
+
+  <div id="map"></div>
+  <button id="mobileFab" aria-label="메뉴 열기/닫기">☰</button>
+</div>
+
+<script>
+/* ---------------- 지도 초기화 ---------------- */
+const map = L.map('map', { zoomControl: true }).setView([36.5, 127.8], 7);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+/* ---------------- DOM 참조 ---------------- */
+const drawBtn = document.getElementById('drawBtn');
+const resetBtn = document.getElementById('resetBtn');
+const areaStats = document.getElementById('areaStats');
+const divideSection = document.getElementById('divideSection');
+const modeAreaBtn = document.getElementById('modeArea');
+const modeDimsBtn = document.getElementById('modeDims');
+const modeAreaFields = document.getElementById('modeAreaFields');
+const modeDimsFields = document.getElementById('modeDimsFields');
+const divideBtn = document.getElementById('divideBtn');
+const resultEl = document.getElementById('result');
+const gpsSection = document.getElementById('gpsSection');
+const gpsBtn = document.getElementById('gpsBtn');
+const gpsResultEl = document.getElementById('gpsResult');
+const panelEl = document.getElementById('panel');
+const panelHandle = document.getElementById('panelHandle');
+const mobileFab = document.getElementById('mobileFab');
+const isMobileLayout = () => window.matchMedia('(max-width: 600px)').matches;
+
+/* ---------------- 상태 ---------------- */
+const MAX_CELLS = 4000; // 분할 개수 상한 — 이보다 많으면 브라우저가 멈출 수 있어 미리 차단
+let isDrawMode = false;  // "영역 그리기 시작" 버튼으로 켠 상태
+let isDragging = false;  // 실제로 드래그 중인지
+let startLatLng = null;
+let selectionRect = null;
+let currentBounds = null;
+let divideMode = 'area'; // 'area' | 'dims'
+let lastGridCells = [];  // 마지막으로 분할된 구획들: {index, center, bounds}
+const gridLayer = L.layerGroup().addTo(map);
+const gpsLayer = L.layerGroup().addTo(map); // 내 위치 마커 + 최장거리 구획 강조 전용 레이어
+
+/* ---------------- 거리 / 면적 계산 (Haversine) ---------------- */
+const EARTH_R = 6371000; // 지구 반지름(m)
+const toRad = d => d * Math.PI / 180;
+
+function haversine(lat1, lon1, lat2, lon2){
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 +
+            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return EARTH_R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function rectMetrics(bounds){
+  const sw = bounds.getSouthWest();
+  const ne = bounds.getNorthEast();
+  const midLat = (sw.lat + ne.lat) / 2;
+  const width = haversine(midLat, sw.lng, midLat, ne.lng);   // 가로(동서)
+  const height = haversine(sw.lat, sw.lng, ne.lat, sw.lng);  // 세로(남북)
+  return { width, height, area: width * height, sw, ne };
+}
+
+const fmt = (n, d = 1) => Number(n).toLocaleString('ko-KR', { maximumFractionDigits: d });
+const m2ToPyeong = m2 => m2 / 3.305785;
+
+/* ---------------- 모바일 하단 시트 패널 열기/닫기 ---------------- */
+function setPanelOpen(open){
+  panelEl.classList.toggle('open', open);
+  mobileFab.textContent = open ? '✕' : '☰';
+}
+function openPanelOnMobile(){ if (isMobileLayout()) setPanelOpen(true); }
+
+mobileFab.addEventListener('click', () => {
+  setPanelOpen(!panelEl.classList.contains('open'));
+});
+panelHandle.addEventListener('click', () => {
+  setPanelOpen(!panelEl.classList.contains('open'));
+});
+
+/* ---------------- 영역 그리기 ---------------- */
+drawBtn.addEventListener('click', () => {
+  isDrawMode ? cancelDrawing() : startDrawMode();
+});
+
+function startDrawMode(){
+  isDrawMode = true;
+  drawBtn.textContent = '그리기 취소';
+  drawBtn.classList.add('active');
+  map.getContainer().classList.add('drawing-mode');
+  map.dragging.disable();
+}
+
+function cancelDrawing(){
+  isDrawMode = false;
+  isDragging = false;
+  startLatLng = null;
+  drawBtn.textContent = '영역 그리기 시작';
+  drawBtn.classList.remove('active');
+  map.getContainer().classList.remove('drawing-mode');
+  map.dragging.enable();
+}
+
+// 격자(gridLayer)와 GPS 결과(gpsLayer) 관련 상태를 한 번에 초기화
+function clearGridAndGps(){
+  gridLayer.clearLayers();
+  gpsLayer.clearLayers();
+  gpsSection.style.display = 'none';
+  gpsResultEl.innerHTML = '';
+  lastGridCells = [];
+}
+
+resetBtn.addEventListener('click', resetAll);
+
+function resetAll(){
+  cancelDrawing();
+  if (selectionRect) { map.removeLayer(selectionRect); selectionRect = null; }
+  clearGridAndGps();
+  currentBounds = null;
+  divideSection.style.display = 'none';
+  resultEl.innerHTML = '';
+  areaStats.innerHTML = '<div class="empty-hint">지도 위를 드래그해서 사각형 영역을 그려주세요.</div>';
+}
+
+// 이벤트 리스너는 한 번만 등록하고, 내부에서 상태 플래그로 동작을 제어한다
+// (그려야 이벤트를 매번 추가/제거하는 방식보다 누락·중복 위험이 적다)
+map.on('mousedown', (e) => {
+  if (!isDrawMode) return;
+  isDragging = true;
+  startLatLng = e.latlng;
+  gridLayer.clearLayers();
+  if (selectionRect) { map.removeLayer(selectionRect); selectionRect = null; }
+  selectionRect = L.rectangle([startLatLng, startLatLng], {
+    color: '#2f6f4e', weight: 2, fillColor: '#8fd6a8', fillOpacity: 0.18
+  }).addTo(map);
+});
+
+map.on('mousemove', (e) => {
+  if (!isDragging || !selectionRect) return;
+  selectionRect.setBounds(L.latLngBounds(startLatLng, e.latlng));
+});
+
+map.on('mouseup', finishDrawing);
+// 지도 바깥에서 마우스를 놓쳐도(드래그하다 지도 밖으로 나간 경우) 정상 종료되도록 보강
+document.addEventListener('mouseup', () => { if (isDragging) finishDrawing(); });
+
+/* ---- 터치(모바일) 드래그 지원 ----
+   모바일 브라우저는 손가락 드래그 중 'mousemove' 호환 이벤트를 신뢰성 있게 발생시키지
+   않으므로, touchstart/touchmove/touchend를 별도로 처리한다. */
+function latLngFromTouch(e){
+  const t = e.touches[0] || e.changedTouches[0];
+  return map.mouseEventToLatLng(t);
+}
+
+const mapEl = map.getContainer();
+
+mapEl.addEventListener('touchstart', (e) => {
+  if (!isDrawMode || e.touches.length !== 1) return; // 핀치 등 멀티터치는 무시
+  e.preventDefault();
+  isDragging = true;
+  startLatLng = latLngFromTouch(e);
+  gridLayer.clearLayers();
+  if (selectionRect) { map.removeLayer(selectionRect); selectionRect = null; }
+  selectionRect = L.rectangle([startLatLng, startLatLng], {
+    color: '#2f6f4e', weight: 2, fillColor: '#8fd6a8', fillOpacity: 0.18
+  }).addTo(map);
+}, { passive: false });
+
+mapEl.addEventListener('touchmove', (e) => {
+  if (!isDragging || !selectionRect) return;
+  e.preventDefault();
+  selectionRect.setBounds(L.latLngBounds(startLatLng, latLngFromTouch(e)));
+}, { passive: false });
+
+mapEl.addEventListener('touchend', () => finishDrawing());
+mapEl.addEventListener('touchcancel', () => finishDrawing());
+
+function finishDrawing(){
+  if (!isDragging) return;
+  const rect = selectionRect;
+  cancelDrawing(); // isDragging=false, 그리기 모드 종료, 지도 드래그 재활성화
+
+  if (!rect) return;
+  const bounds = rect.getBounds();
+  if (bounds.getSouthWest().equals(bounds.getNorthEast())) {
+    map.removeLayer(rect);
+    selectionRect = null;
+    return; // 드래그 없이 클릭만 한 경우
+  }
+  currentBounds = bounds;
+  updateAreaStats();
+  openPanelOnMobile();
+}
+
+function updateAreaStats(){
+  const m = rectMetrics(currentBounds);
+  areaStats.innerHTML = `
+    <div class="stat-row"><span class="label">가로 길이</span><span class="value">${fmt(m.width)} m</span></div>
+    <div class="stat-row"><span class="label">세로 길이</span><span class="value">${fmt(m.height)} m</span></div>
+    <div class="stat-row"><span class="label">총 면적</span><span class="value big">${fmt(m.area)} m²</span></div>
+    <div class="stat-row"><span class="label">총 면적(평)</span><span class="value">${fmt(m2ToPyeong(m.area))} 평</span></div>
+  `;
+  divideSection.style.display = 'block';
+  resultEl.innerHTML = '';
+  clearGridAndGps();
+}
+
+/* ---------------- 분할 모드 전환 ---------------- */
+modeAreaBtn.addEventListener('click', () => setDivideMode('area'));
+modeDimsBtn.addEventListener('click', () => setDivideMode('dims'));
+
+function setDivideMode(mode){
+  divideMode = mode;
+  modeAreaBtn.classList.toggle('active', mode === 'area');
+  modeDimsBtn.classList.toggle('active', mode === 'dims');
+  modeAreaFields.style.display = mode === 'area' ? 'block' : 'none';
+  modeDimsFields.style.display = mode === 'dims' ? 'block' : 'none';
+}
+
+/* ---------------- 분할 실행 ---------------- */
+divideBtn.addEventListener('click', () => {
+  if (!currentBounds) return;
+  resultEl.innerHTML = '';
+
+  const m = rectMetrics(currentBounds);
+  let cellW, cellH;
+
+  if (divideMode === 'area') {
+    const rawVal = parseFloat(document.getElementById('targetArea').value);
+    if (!(rawVal > 0)) { showMessage(resultEl, '면적 값을 올바르게 입력해주세요.', true); return; }
+    const unit = document.getElementById('areaUnit').value;
+    const targetM2 = unit === 'pyeong' ? rawVal * 3.305785 : rawVal;
+    const side = Math.sqrt(targetM2);
+    cellW = side; cellH = side;
+  } else {
+    cellW = parseFloat(document.getElementById('cellWidth').value);
+    cellH = parseFloat(document.getElementById('cellHeight').value);
+    if (!(cellW > 0) || !(cellH > 0)) { showMessage(resultEl, '가로/세로 값을 올바르게 입력해주세요.', true); return; }
+  }
+
+  const cols = Math.max(1, Math.round(m.width / cellW));
+  const rows = Math.max(1, Math.round(m.height / cellH));
+  const totalCells = cols * rows;
+
+  if (totalCells > MAX_CELLS) {
+    showMessage(resultEl, `분할 개수가 너무 많습니다 (${totalCells.toLocaleString('ko-KR')}개). 셀 크기를 늘리거나 영역을 줄여주세요. (최대 ${MAX_CELLS.toLocaleString('ko-KR')}개)`, true);
+    return;
+  }
+
+  drawGrid(currentBounds, cols, rows);
+  renderResult(m, cols, rows);
+});
+
+// 패널의 각 결과 영역에 안내/에러 메시지를 표시하는 공용 함수
+function showMessage(targetEl, msg, isError = false){
+  targetEl.innerHTML = `<div class="empty-hint"${isError ? ' style="background:#fbe9e5;color:#a4462b;"' : ''}>${msg}</div>`;
+}
+
+/* ---------------- PWA: 서비스워커 등록 (홈 화면 앱 설치/오프라인 셸 캐싱) ---------------- */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {
+      // file://로 열었거나 서비스워커를 지원하지 않는 환경에서는 조용히 무시
+    });
+  });
+}
+
+function drawGrid(bounds, cols, rows){
+  clearGridAndGps();
+  const sw = bounds.getSouthWest();
+  const ne = bounds.getNorthEast();
+  const lngStep = (ne.lng - sw.lng) / cols;
+  const latStep = (ne.lat - sw.lat) / rows;
+  const orderedCenters = []; // 한붓그리기 순서(지그재그)로 담을 중앙점 배열
+  const cells = [];          // GPS 최장거리 계산용: {index, center, bounds}
+
+  let idx = 1;
+  for (let r = 0; r < rows; r++) {
+    const rowCenters = [];
+    for (let c = 0; c < cols; c++) {
+      const cellSW = L.latLng(sw.lat + r * latStep, sw.lng + c * lngStep);
+      const cellNE = L.latLng(sw.lat + (r + 1) * latStep, sw.lng + (c + 1) * lngStep);
+      const cellBounds = L.latLngBounds(cellSW, cellNE);
+      const center = L.latLng((cellSW.lat + cellNE.lat) / 2, (cellSW.lng + cellNE.lng) / 2);
+
+      // 구획 경계: 검정 점선, 채움 없음
+      const rect = L.rectangle(cellBounds, {
+        color: '#111111', weight: 1.5, dashArray: '4 4', fill: false
+      }).addTo(gridLayer);
+
+      const cm = rectMetrics(cellBounds);
+      rect.bindTooltip(
+        `구획 ${idx}<br>${fmt(cm.area)} m² (${fmt(m2ToPyeong(cm.area))}평)`,
+        { sticky: true }
+      );
+
+      cells.push({ index: idx, center, bounds: cellBounds });
+      idx++;
+
+      rowCenters.push(center);
+    }
+    // 한 줄씩 방향을 번갈아(지그재그) 이으면 선을 떼지 않고 모든 중앙점을 지나갈 수 있다
+    if (r % 2 === 1) rowCenters.reverse();
+    orderedCenters.push(...rowCenters);
+  }
+
+  if (orderedCenters.length > 1) {
+    // 밝은 지도 배경에서도 잘 보이도록 어두운 테두리(casing)를 먼저 깔고 흰 점선을 그 위에 그린다
+    L.polyline(orderedCenters, { color: '#111111', weight: 4, opacity: 0.35 }).addTo(gridLayer);
+    L.polyline(orderedCenters, { color: '#ffffff', weight: 2, dashArray: '6 5', opacity: 1 }).addTo(gridLayer);
+  }
+
+  orderedCenters.forEach(pt => {
+    L.circleMarker(pt, {
+      radius: 4, color: '#111111', weight: 1.5, fillColor: '#ffffff', fillOpacity: 1
+    }).addTo(gridLayer);
+  });
+
+  lastGridCells = cells;
+  gpsSection.style.display = 'block';
+}
+
+function renderResult(m, cols, rows){
+  const total = cols * rows;
+  const avgCellArea = m.area / total;
+  resultEl.innerHTML = `
+    <div class="stat-row"><span class="label">분할 격자</span><span class="value">${cols} × ${rows}</span></div>
+    <div class="stat-row"><span class="label">총 구획 수</span><span class="value big">${total}개</span></div>
+    <div class="stat-row"><span class="label">구획 평균 면적</span><span class="value">${fmt(avgCellArea)} m² (${fmt(m2ToPyeong(avgCellArea))}평)</span></div>
+    <div class="stat-row"><span class="label">구획당 가로</span><span class="value">${fmt(m.width / cols)} m</span></div>
+    <div class="stat-row"><span class="label">구획당 세로</span><span class="value">${fmt(m.height / rows)} m</span></div>
+    <p style="font-size:11.5px;color:var(--ink-soft);margin-top:10px;line-height:1.5;">
+      지도 위 각 구획에 마우스를 올리면 개별 면적을 확인할 수 있습니다. 면적은 위경도 좌표 기반 구면(Haversine) 근사 계산이므로 실제 지적도·측량 면적과는 다소 차이가 있을 수 있습니다.
+    </p>
+  `;
+}
+
+/* ---------------- GPS: 내 위치에서 가장 먼 구획 찾기 ---------------- */
+gpsBtn.addEventListener('click', findFarthestCellFromMyLocation);
+
+function findFarthestCellFromMyLocation(){
+  if (!lastGridCells.length) {
+    showMessage(gpsResultEl, '먼저 3번에서 구획 분할을 실행해주세요.', true);
+    return;
+  }
+  if (!('geolocation' in navigator)) {
+    showMessage(gpsResultEl, '이 브라우저는 위치 정보(GPS)를 지원하지 않습니다.', true);
+    return;
+  }
+  // 위치 정보 API는 보안 컨텍스트(https 또는 localhost)에서만 정상 동작한다.
+  // file://로 직접 연 경우 브라우저에 따라 차단되거나 권한 요청이 뜨지 않을 수 있다.
+  if (window.isSecureContext === false) {
+    showMessage(gpsResultEl, '위치 정보는 https 또는 localhost 환경에서만 사용할 수 있습니다. 간이 웹서버로 열어주세요.', true);
+    return;
+  }
+
+  gpsBtn.disabled = true;
+  gpsBtn.textContent = '내 위치 확인 중…';
+  showMessage(gpsResultEl, '위치 정보를 가져오는 중입니다…');
+
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const userLatLng = L.latLng(pos.coords.latitude, pos.coords.longitude);
+      renderGpsResult(userLatLng, findFarthestCell(userLatLng));
+      gpsBtn.disabled = false;
+      gpsBtn.textContent = '내 위치 확인하고 찾기';
+    },
+    (err) => {
+      showMessage(gpsResultEl, geolocationErrorMessage(err), true);
+      gpsBtn.disabled = false;
+      gpsBtn.textContent = '내 위치 확인하고 찾기';
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+  );
+}
+
+function geolocationErrorMessage(err){
+  switch (err.code) {
+    case err.PERMISSION_DENIED:
+      return '위치 정보 접근 권한이 거부되었습니다. 브라우저 주소창의 위치 권한 설정을 확인해주세요.';
+    case err.POSITION_UNAVAILABLE:
+      return '현재 위치를 확인할 수 없습니다. 잠시 후 다시 시도해주세요.';
+    case err.TIMEOUT:
+      return '위치 확인 요청이 시간 초과되었습니다. 다시 시도해주세요.';
+    default:
+      return '위치 정보를 가져오는 중 알 수 없는 오류가 발생했습니다.';
+  }
+}
+
+// 저장된 구획 중앙점들 중 사용자 위치에서 Haversine 거리가 가장 먼 구획을 반환
+function findFarthestCell(userLatLng){
+  let farthest = null;
+  let maxDist = -1;
+  for (const cell of lastGridCells) {
+    const d = haversine(userLatLng.lat, userLatLng.lng, cell.center.lat, cell.center.lng);
+    if (d > maxDist) { maxDist = d; farthest = cell; }
+  }
+  return { cell: farthest, distance: maxDist };
+}
+
+function renderGpsResult(userLatLng, farthestResult){
+  const { cell, distance } = farthestResult;
+  gpsLayer.clearLayers();
+
+  // 내 위치 마커
+  L.circleMarker(userLatLng, {
+    radius: 7, color: '#1c2321', weight: 2, fillColor: '#2f6f4e', fillOpacity: 1
+  }).addTo(gpsLayer).bindTooltip('내 위치');
+
+  // 가장 먼 구획 강조 표시(주황 실선)
+  L.rectangle(cell.bounds, {
+    color: '#a4462b', weight: 3, fill: true, fillColor: '#a4462b', fillOpacity: 0.15
+  }).addTo(gpsLayer).bindTooltip(`가장 먼 구획: 구획 ${cell.index}`);
+
+  // 내 위치 ↔ 가장 먼 구획 중앙점 연결선
+  L.polyline([userLatLng, cell.center], {
+    color: '#a4462b', weight: 2, dashArray: '3 6'
+  }).addTo(gpsLayer);
+
+  map.fitBounds(L.latLngBounds([userLatLng, cell.center]), { padding: [50, 50] });
+
+  gpsResultEl.innerHTML = `
+    <div class="stat-row"><span class="label">가장 먼 구획</span><span class="value warn">구획 ${cell.index}</span></div>
+    <div class="stat-row"><span class="label">직선 거리</span><span class="value big">${fmt(distance)} m</span></div>
+    <div class="stat-row"><span class="label">거리(km)</span><span class="value">${fmt(distance / 1000, 2)} km</span></div>
+    <p style="font-size:11.5px;color:var(--ink-soft);margin-top:8px;line-height:1.5;">
+      내 위치와 각 구획 중앙점 사이의 직선(Haversine) 거리를 비교해 가장 먼 구획을 찾았습니다. 지도 위 주황색 사각형이 해당 구획입니다.
+    </p>
+  `;
+}
+</script>
+</body>
+</html>

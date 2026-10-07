@@ -1,0 +1,15 @@
+{
+  "name": "지도 영역 분할 계산기",
+  "short_name": "분할계산기",
+  "description": "지도에서 영역을 드래그해 면적을 계산하고 원하는 크기로 구획을 나누는 도구",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f6f5f1",
+  "theme_color": "#2f6f4e",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
