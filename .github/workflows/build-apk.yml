@@ -32,6 +32,15 @@ jobs:
       - name: Sync web assets into Android project
         run: npx cap sync android
 
+      - name: Ensure location permissions in manifest
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          for P in ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION; do
+            grep -q "android.permission.$P" "$MANIFEST" || sed -i "s|</manifest>|    <uses-permission android:name=\"android.permission.$P\" />\n</manifest>|" "$MANIFEST"
+          done
+          echo "--- 최종 권한 목록 ---"
+          grep "uses-permission" "$MANIFEST"
+
       - name: Grant execute permission for gradlew
         run: chmod +x android/gradlew
 
